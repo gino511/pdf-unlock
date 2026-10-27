@@ -110,11 +110,13 @@ async function run(){
       fill.style.width=(i/pdf.numPages*100)+'%';
     }
     const bytes=await out.save();
-    const dl=await claude.use('downloads');
-    if(!dl){msg('此環境無法下載檔案，請在 claude.ai 內開啟','err');return}
-    try{
-      await dl.save({filename:file.name.replace(/\.pdf$/i,'')+'_unlocked.pdf',data:new Blob([bytes],{type:'application/pdf'})});
-      msg('已解鎖並下載','ok');
+        const url=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
+    const link=document.createElement('a');
+    link.href=url;link.download=file.name;
+    document.body.appendChild(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),10000);
+    msg('已解鎖並下載','ok');
+
     }catch(e){
       msg(e&&e.code==='declined'?'已取消下載':'下載失敗：'+(e&&e.message||e),'err');
     }
