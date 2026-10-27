@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PDF 解鎖</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#1d2330;--muted:#6b7385;--line:#d9dde5;--accent:#2f6df6;--accent-t:#fff;--err:#c93434;--ok:#1b8a4b;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14171d;--card:#1e222b;--text:#e8ebf2;--muted:#98a0b3;--line:#333947;--accent:#5b8cff;--accent-t:#0b1020;--err:#ff7b7b;--ok:#5fd18d}}
+:root[data-theme="dark"]{--bg:#14171d;--card:#1e222b;--text:#e8ebf2;--muted:#98a0b3;--line:#333947;--accent:#5b8cff;--accent-t:#0b1020;--err:#ff7b7b;--ok:#5fd18d}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;line-height:1.6}
+main{max-width:520px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:1.4rem;margin:8px 0 4px}
+p.sub{margin:0 0 20px;color:var(--muted);font-size:.92rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}
+.drop{display:block;border:2px dashed var(--line);border-radius:12px;padding:28px 12px;text-align:center;cursor:pointer;color:var(--muted);transition:.15s}
+.drop.over,.drop:hover{border-color:var(--accent);color:var(--accent)}
+.drop b{display:block;color:var(--text);margin-bottom:4px;word-break:break-all}
+input[type=file]{display:none}
+label.f{display:block;margin:16px 0 6px;font-size:.9rem;color:var(--muted)}
+.pw{display:flex;gap:8px}
+input[type=password],input[type=text]{flex:1;min-width:0;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text);font-size:1rem}
+input:focus{outline:2px solid var(--accent);outline-offset:0}
+button{font:inherit;cursor:pointer}
+.eye{border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:10px;padding:0 12px}
+.go{width:100%;margin-top:18px;padding:13px;border:0;border-radius:10px;background:var(--accent);color:var(--accent-t);font-weight:600;font-size:1rem}
+.go:disabled{opacity:.45;cursor:not-allowed}
+.bar{height:6px;background:var(--line);border-radius:3px;margin-top:14px;overflow:hidden;display:none}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .1s}
+#msg{margin-top:12px;font-size:.92rem;min-height:1.4em}
+#msg.err{color:var(--err)}#msg.ok{color:var(--ok)}
+.note{margin-top:18px;font-size:.8rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+<h1>PDF 解鎖</h1>
+<p class="sub">輸入密碼，移除保護後下載。檔案只在你的瀏覽器內處理，不會上傳。</p>
+<div class="card">
+<label class="drop" id="drop" for="file"><b id="fname">點擊選擇或拖曳 PDF 到這裡</b><span id="fsize"></span></label>
+<input type="file" id="file" accept="application/pdf,.pdf">
+<label class="f" for="pw">密碼</label>
+<div class="pw"><input type="password" id="pw" autocomplete="off" placeholder="輸入 PDF 密碼"><button class="eye" id="eye" type="button" aria-label="顯示密碼">顯示</button></div>
+<button class="go" id="go" disabled>解鎖並下載</button>
+<div class="bar" id="bar"><i id="fill"></i></div>
+<div id="msg"></div>
+</div>
+<p class="note">輸出的 PDF 以每頁高解析度影像重建，版面與內容不變，但文字無法再選取或搜尋。請只解鎖你有權處理的檔案。</p>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const pdfjsLib=window['pdfjs-dist/build/pdf'];
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+let file=null,busy=false;
+const msg=(t,c='')=>{$('msg').textContent=t;$('msg').className=c};
+function setFile(f){
+  if(!f)return;
+  if(!/\.pdf$/i.test(f.name)&&f.type!=='application/pdf'){msg('請選擇 PDF 檔案','err');return}
+  file=f;$('fname').textContent=f.name;$('fsize').textContent=(f.size/1048576).toFixed(2)+' MB';$('go').disabled=false;msg('');
+}
+$('file').addEventListener('change',e=>setFile(e.target.files[0]));
+const drop=$('drop');
+['dragenter','dragover'].forEach(n=>drop.addEventListener(n,e=>{e.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(n=>drop.addEventListener(n,e=>{e.preventDefault();drop.classList.remove('over')}));
+drop.addEventListener('drop',e=>setFile(e.dataTransfer.files[0]));
+$('eye').addEventListener('click',()=>{const p=$('pw'),s=p.type==='password';p.type=s?'text':'password';$('eye').textContent=s?'隱藏':'顯示'});
+$('pw').addEventListener('keydown',e=>{if(e.key==='Enter'&&!$('go').disabled)run()});
+$('go').addEventListener('click',run);
+
+async function run(){
+  if(!file||busy)return;
+  busy=true;$('go').disabled=true;msg('讀取中…');
+  const bar=$('bar'),fill=$('fill');bar.style.display='block';fill.style.width='0';
+  try{
+    const buf=await file.arrayBuffer();
+    let pdf;
+    try{
+      pdf=await pdfjsLib.getDocument({data:new Uint8Array(buf),password:$('pw').value}).promise;
+    }catch(e){
+      if(e&&e.name==='PasswordException'){
+        msg(e.code===2?'密碼錯誤，請再試一次':'此檔案需要密碼','err');
+        return;
+      }
+      throw e;
+    }
+    const out=await PDFLib.PDFDocument.create();
+    for(let i=1;i<=pdf.numPages;i++){
+      msg(`處理第 ${i} / ${pdf.numPages} 頁…`);
+      const page=await pdf.getPage(i);
+      const base=page.getViewport({scale:1});
+      const scale=Math.min(3,Math.max(1.5,2400/Math.max(base.width,base.height)));
+      const vp=page.getViewport({scale});
+      const c=document.createElement('canvas');
+      c.width=Math.floor(vp.width);c.height=Math.floor(vp.height);
+      const ctx=c.getContext('2d');
+      ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);
+      await page.render({canvasContext:ctx,viewport:vp}).promise;
+      const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.92));
+      const img=await out.embedJpg(await blob.arrayBuffer());
+      out.addPage([base.width,base.height]).drawImage(img,{x:0,y:0,width:base.width,height:base.height});
+      c.width=c.height=0;page.cleanup();
+      fill.style.width=(i/pdf.numPages*100)+'%';
+    }
+    const bytes=await out.save();
+    const dl=await claude.use('downloads');
+    if(!dl){msg('此環境無法下載檔案，請在 claude.ai 內開啟','err');return}
+    try{
+      await dl.save({filename:file.name.replace(/\.pdf$/i,'')+'_unlocked.pdf',data:new Blob([bytes],{type:'application/pdf'})});
+      msg('已解鎖並下載','ok');
+    }catch(e){
+      msg(e&&e.code==='declined'?'已取消下載':'下載失敗：'+(e&&e.message||e),'err');
+    }
+  }catch(e){
+    msg('處理失敗：'+(e&&e.message||e),'err');
+  }finally{
+    busy=false;$('go').disabled=!file;
+  }
+}
+</script>
+</body>
+</html>
