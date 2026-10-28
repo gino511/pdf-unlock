@@ -31,6 +31,11 @@ button{font:inherit;cursor:pointer}
 .go{width:100%;margin-top:18px;padding:13px;border:0;border-radius:10px;background:var(--accent);color:var(--accent-t);font-weight:600;font-size:1rem}
 .btns{display:flex;flex-direction:column;gap:10px;margin-top:18px}.btns .go{margin-top:0}
 .go.sec{background:var(--bg);color:var(--text);border:1px solid var(--line)}
+.rem{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:.88rem;color:var(--muted)}
+#pvbox{position:fixed;inset:0;z-index:50;overflow:auto;background:var(--bg);padding:calc(env(safe-area-inset-top,0px) + 12px) 12px calc(env(safe-area-inset-bottom,0px) + 12px)}
+#pvbox[hidden]{display:none}
+#pvclose{position:sticky;top:0;margin:0 0 12px;z-index:2}
+#pvimgs img{display:block;width:100%;max-width:800px;margin:0 auto 12px;border:1px solid var(--line);background:#fff}
 .go:disabled{opacity:.45;cursor:not-allowed}
 .bar{height:6px;background:var(--line);border-radius:3px;margin-top:14px;overflow:hidden;display:none}
 .bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .1s}
@@ -48,13 +53,15 @@ button{font:inherit;cursor:pointer}
 <input type="file" id="file" accept="application/pdf,.pdf">
 <label class="f" for="pw">密碼</label>
 <div class="pw"><input type="password" id="pw" autocomplete="off" placeholder="輸入 PDF 密碼"><button class="eye" id="eye" type="button" aria-label="顯示密碼">顯示</button></div>
+<label class="rem"><input type="checkbox" id="rem">記住密碼（只存在這支手機，不會上傳）</label>
 <div class="btns"><button class="go" data-m="photo" disabled>存成照片</button><button class="go sec" data-m="preview" disabled>預覽</button><button class="go sec" data-m="download" disabled>下載</button></div>
 <div class="bar" id="bar"><i id="fill"></i></div>
 <div id="msg"></div>
-<button class="go" id="share" style="display:none">點此儲存到照片</button>
+<button class="go" id="share" style="display:none">點此儲存／分享</button>
 </div>
 <p class="note">解鎖後的 PDF 將以圖片重新建立，保留原有版面與內容。</p>
 </main>
+<div id="pvbox" hidden><button class="go" id="pvclose">關閉預覽</button><div id="pvimgs"></div></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
@@ -77,8 +84,11 @@ const drop=$('drop');
 ['dragleave','drop'].forEach(n=>drop.addEventListener(n,e=>{e.preventDefault();drop.classList.remove('over')}));
 drop.addEventListener('drop',e=>setFile(e.dataTransfer.files[0]));
 $('eye').addEventListener('click',()=>{const p=$('pw'),s=p.type==='password';p.type=s?'text':'password';$('eye').textContent=s?'隱藏':'顯示'});
+try{const p=localStorage.getItem('pdfpw');if(p!==null){$('pw').value=p;$('rem').checked=true}}catch(e){}
+$('rem').addEventListener('change',()=>{try{if(!$('rem').checked)localStorage.removeItem('pdfpw')}catch(e){}});
 $('pw').addEventListener('keydown',e=>{if(e.key==='Enter'&&file)run('download')});
 btns.forEach(b=>b.addEventListener('click',()=>run(b.dataset.m)));
+$('pvclose').addEventListener('click',()=>{$('pvbox').hidden=true;$('pvimgs').innerHTML=''});
 const base=()=>file.name.replace(/\.pdf$/i,'');
 function save(f){
   const url=URL.createObjectURL(f);
@@ -87,19 +97,24 @@ function save(f){
   document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),10000);
 }
-$('share').addEventListener('click',async()=>{
+async function send(files,auto){
+  photos=files;
   try{
-    if(navigator.canShare&&navigator.canShare({files:photos})){
-      await navigator.share({files:photos});msg('已完成','ok');
+    if(navigator.canShare&&navigator.canShare({files})){
+      await navigator.share({files});msg('已完成','ok');
     }else{
-      photos.forEach((f,i)=>setTimeout(()=>save(f),i*300));msg('已下載圖片','ok');
+      files.forEach((f,i)=>setTimeout(()=>save(f),i*300));msg('已下載','ok');
     }
-  }catch(e){if(!e||e.name!=='AbortError')msg('儲存失敗：'+(e&&e.message||e),'err')}
-});
+  }catch(e){
+    if(e&&e.name==='AbortError')return;
+    if(auto){msg('完成，請按下方按鈕儲存或分享','ok');$('share').style.display='block'}
+    else msg('儲存失敗：'+(e&&e.message||e),'err');
+  }
+}
+$('share').addEventListener('click',()=>send(photos,false));
 
 async function run(mode){
   if(!file||busy)return;
-  const w=mode==='preview'?window.open('','_blank'):null;
   busy=true;setBtns(true);$('share').style.display='none';msg('讀取中…');
   const bar=$('bar'),fill=$('fill');bar.style.display='block';fill.style.width='0';
   try{
@@ -110,50 +125,50 @@ async function run(mode){
     }catch(e){
       if(e&&e.name==='PasswordException'){
         msg(e.code===2?'密碼錯誤，請再試一次':'此檔案需要密碼','err');
-        if(w)w.close();
         return;
       }
       throw e;
     }
-    const out=mode==='photo'?null:await PDFLib.PDFDocument.create();
-    photos=[];
+    try{if($('rem').checked)localStorage.setItem('pdfpw',$('pw').value)}catch(e){}
+    const out=mode==='download'?await PDFLib.PDFDocument.create():null;
+    const imgs=[];
     for(let i=1;i<=pdf.numPages;i++){
       msg(`處理第 ${i} / ${pdf.numPages} 頁…`);
       const page=await pdf.getPage(i);
       const bv=page.getViewport({scale:1});
-      const scale=Math.min(3,Math.max(1.5,2400/Math.max(bv.width,bv.height)));
+      const scale=mode==='preview'?1.5:Math.min(3,Math.max(1.5,2400/Math.max(bv.width,bv.height)));
       const vp=page.getViewport({scale});
       const c=document.createElement('canvas');
       c.width=Math.floor(vp.width);c.height=Math.floor(vp.height);
       const ctx=c.getContext('2d');
       ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);
       await page.render({canvasContext:ctx,viewport:vp}).promise;
-      const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.92));
-      if(mode==='photo'){
-        photos.push(new File([blob],base()+i+'.jpg',{type:'image/jpeg'}));
-      }else{
+      const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',mode==='preview'?0.8:0.92));
+      if(mode==='download'){
         const img=await out.embedJpg(await blob.arrayBuffer());
         out.addPage([bv.width,bv.height]).drawImage(img,{x:0,y:0,width:bv.width,height:bv.height});
+      }else if(mode==='photo'){
+        imgs.push(new File([blob],base()+i+'.jpg',{type:'image/jpeg'}));
+      }else{
+        imgs.push(blob);
       }
       c.width=c.height=0;page.cleanup();
       fill.style.width=(i/pdf.numPages*100)+'%';
     }
-    if(mode==='photo'){
-      msg(`完成，共 ${photos.length} 張，請按下方按鈕儲存`,'ok');
-      $('share').style.display='block';
-    }else{
+    if(mode==='download'){
       const bytes=await out.save();
-      if(mode==='preview'){
-        const url=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
-        if(w)w.location.href=url;else location.href=url;
-        msg('已開啟預覽','ok');
-      }else{
-        save(new File([bytes],base()+'1.pdf',{type:'application/octet-stream'}));
-        msg('已解鎖並下載','ok');
-      }
+      msg('完成','ok');
+      await send([new File([bytes],base()+'1.pdf',{type:'application/pdf'})],true);
+    }else if(mode==='photo'){
+      msg(`完成，共 ${imgs.length} 張`,'ok');
+      await send(imgs,true);
+    }else{
+      const box=$('pvimgs');box.innerHTML='';
+      imgs.forEach(bl=>{const im=document.createElement('img');im.src=URL.createObjectURL(bl);box.appendChild(im)});
+      $('pvbox').hidden=false;$('pvbox').scrollTop=0;
+      msg('預覽中','ok');
     }
   }catch(e){
-    if(w)w.close();
     msg('處理失敗：'+(e&&e.message||e),'err');
   }finally{
     busy=false;setBtns(!file);
